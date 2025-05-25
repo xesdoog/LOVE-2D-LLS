@@ -1,9 +1,11 @@
+---@meta
+
 -- Module: love.RopeJoint
 love.RopeJoint = {}
 --- Gets the maximum length of a RopeJoint.
 ---@return number maxLength # The maximum length of the RopeJoint.
-function love.getMaxLength() end
+function love.RopeJoint.getMaxLength() end
 
 --- Sets the maximum length of a RopeJoint.
 ---@param maxLength number
-function love.setMaxLength(maxLength) end
+function love.RopeJoint.setMaxLength(maxLength) end

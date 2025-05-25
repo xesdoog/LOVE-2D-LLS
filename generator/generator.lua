@@ -1,4 +1,15 @@
 local isNT = package.config:sub(1,1) == "\\"
+local dataTypes = {
+    ["nil"]           = true,
+    ["boolean"]       = true,
+    ["number"]        = true,
+    ["string"]        = true,
+    ["userdata"]      = true,
+    ["lightuserdata"] = true,
+    ["function"]      = true,
+    ["thread"]        = true,
+    ["table"]         = true
+}
 
 if isNT then
     local ver = "5.4"
@@ -96,7 +107,8 @@ local function SanitizeDoc(doc)
 end
 
 ---@param func table
-local function StubFunc(func)
+---@param moduleName? string
+local function StubFunc(func, moduleName)
     local args = {}
     local doc_lines = {}
     table.insert(doc_lines, ("--- %s"):format(SanitizeDoc(func.description)))
@@ -106,6 +118,14 @@ local function StubFunc(func)
             for _, arg in ipairs(func.variants[1].arguments) do
                 local argName = arg.name or "arg"
                 local argType = arg.type or "any"
+
+                if argType == "light userdata" then
+                    argType = "lightuserdata"
+                end
+
+                if not dataTypes[argType] then
+                    argType = "any"
+                end
 
                 local isOptional = arg.default ~= nil
                 or (arg.description and arg.description:lower():match("optional"))
@@ -131,20 +151,29 @@ local function StubFunc(func)
         end
     end
 
-    local sig = string.format("function love.%s(%s) end", func.name, table.concat(args, ", "))
+    local funcName = moduleName
+    and string.format("love.%s.%s", moduleName, func.name)
+    or string.format("love.%s", func.name)
+
+    local sig = string.format("function %s(%s) end", funcName, table.concat(args, ", "))
     return table.concat(doc_lines, "\n") .. "\n" .. sig .. "\n"
 end
 
 ---@param module table
 local function GenerateStubForModule(module)
     local stub = {}
+    local name = module.name and string.format("love.%s", module.name) or "love"
 
-    table.insert(stub, string.format("-- Module: love.%s", module.name))
-    table.insert(stub, string.format("love.%s = {}", module.name))
+    table.insert(stub, "---@meta\n")
+    -- table.insert(stub, string.format("---@module %s", name))
+    table.insert(stub, string.format("-- Module: %s", name))
+    table.insert(stub, string.format("%s = {}", name))
 
-    if module.functions then
-        for _, func in ipairs(module.functions) do
-            table.insert(stub, StubFunc(func))
+    if module.functions or module.callbacks or module.types then
+        for _, t in ipairs({module.functions or {}, module.callbacks or {}, module.types or {}}) do
+            for _, func in ipairs(t) do
+                table.insert(stub, StubFunc(func, module.name))
+            end
         end
     end
 
@@ -152,22 +181,35 @@ local function GenerateStubForModule(module)
 end
 
 
+local parent_path = io.parentPath(workdir) .. "/generator/"
+local main_path = ("%s/generator/love-api/love_api.lua"):format(io.parentPath(workdir))
 local modules_path = ("%s/love-api/modules/"):format(workdir)
 local out_path = ("%s/stubs/"):format(io.parentPath(workdir))
 
 lfs.mkdir(out_path)
+package.path = package.path .. ";" .. parent_path .. "?.lua;" .. parent_path .. "?/init.lua;"
+package.path = package.path .. ";" .. love_api_path .. "/?.lua;" .. love_api_path .. "/?/init.lua;"
 package.path = package.path .. ";" .. modules_path .. "?.lua;" .. modules_path .. "?/init.lua;"
 
-local function Main(path)
-    print("[*] Generating stubs from love-api...")
+local function GenerateModules(path)
+    print("[*] Generating main stub ...")
+    local chunk    = assert(loadfile(main_path))
+    local mod      = chunk("love-api")
+    local stub     = GenerateStubForModule(mod)
+    local outfile  = out_path .. "love.lua"
+    print("[+] Generated stub for love.lua")
+    WriteFile(outfile, stub)
+
+    print("[*] Generating stubs for LOVE-API modules...")
     for filepath, _ in Tree(path) do
         if (GetFileExtension(filepath) == ".lua") then
             local filename = filepath:match("([^/\\]+)$")
             local mod_name = filename or ""
-            local chunk    = assert(loadfile(filepath))
-            local mod      = chunk(mod_name)
-            local stub     = GenerateStubForModule(mod)
-            local outfile  = out_path .. "love." .. mod.name .. ".lua"
+
+            chunk   = assert(loadfile(filepath))
+            mod     = chunk(mod_name)
+            stub    = GenerateStubForModule(mod)
+            outfile = out_path .. "love." .. mod.name .. ".lua"
 
             WriteFile(outfile, stub)
             print("[+] Generated stub for love." .. mod.name)
@@ -176,4 +218,4 @@ local function Main(path)
     print("[+] Stub generation complete.")
 end
 
-Main(modules_path)
+GenerateModules(modules_path)
